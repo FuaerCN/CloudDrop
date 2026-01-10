@@ -79,49 +79,7 @@ export class Room {
       return this.handleCheckPassword(request);
     }
 
-    if (url.pathname === '/debug') {
-      // Debug endpoint to check room state
-      return this.handleDebug();
-    }
-
     return new Response('Not Found', { status: 404 });
-  }
-
-  /**
-   * Debug endpoint - returns room state for diagnostics
-   */
-  private handleDebug(): Response {
-    const webSockets = this.state.getWebSockets();
-    const activePeers = this.getActivePeers();
-
-    // Collect detailed info about all WebSockets
-    const webSocketDetails = webSockets.map((ws, index) => {
-      const attachment = ws.deserializeAttachment() as PeerAttachment | null;
-      return {
-        index,
-        readyState: ws.readyState,
-        readyStateLabel: ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState] || 'UNKNOWN',
-        hasAttachment: !!attachment,
-        peerId: attachment?.id || null,
-        peerName: attachment?.name || null,
-      };
-    });
-
-    const debugInfo = {
-      totalWebSockets: webSockets.length,
-      activePeers: activePeers.size,
-      webSocketDetails,
-      peers: Array.from(activePeers.entries()).map(([id, { attachment }]) => ({
-        id,
-        name: attachment.name,
-        deviceType: attachment.deviceType,
-      })),
-      hasPassword: this.passwordHash !== null,
-    };
-
-    return new Response(JSON.stringify(debugInfo, null, 2), {
-      headers: { 'Content-Type': 'application/json' },
-    });
   }
 
   /**
@@ -171,8 +129,6 @@ export class Room {
       // Store password hash
       this.passwordHash = body.passwordHash;
       await this.state.storage.put('passwordHash', body.passwordHash);
-
-      console.log('[Room] Password set for room');
 
       return new Response(JSON.stringify({
         success: true
@@ -250,13 +206,9 @@ export class Room {
     const peers = new Map<string, { ws: WebSocket; attachment: PeerAttachment }>();
     const webSockets = this.state.getWebSockets();
 
-    console.log(`[Room] getActivePeers: total WebSockets=${webSockets.length}`);
-
     for (const ws of webSockets) {
       const attachment = ws.deserializeAttachment() as PeerAttachment | null;
       const readyState = ws.readyState;
-
-      console.log(`[Room] WebSocket: readyState=${readyState}, hasAttachment=${!!attachment}, peerId=${attachment?.id || 'none'}`);
 
       // Only include WebSockets that are OPEN (readyState === 1) and have valid attachment
       // Use explicit constant as WebSocket.OPEN may not be available in Workers
@@ -341,8 +293,6 @@ export class Room {
     const tags = this.state.getTags(ws);
     const roomCode = tags.length > 0 ? tags[0] : '';
 
-    console.log(`[Room] handleJoin: peerId=${peerId}, roomCode=${roomCode}, name=${joinData.name}`);
-
     // Create peer attachment data
     const attachment: PeerAttachment = {
       id: peerId,
@@ -359,13 +309,10 @@ export class Room {
 
     // Get all other active peers from their WebSocket attachments
     const activePeers = this.getActivePeers();
-    console.log(`[Room] Active peers count: ${activePeers.size}, IDs: ${Array.from(activePeers.keys()).join(', ')}`);
 
     const otherPeers = Array.from(activePeers.entries())
       .filter(([id]) => id !== peerId)
       .map(([id, { attachment: p }]) => ({ id, name: p.name, deviceType: p.deviceType, browserInfo: p.browserInfo }));
-
-    console.log(`[Room] Other peers to send: ${otherPeers.length}`);
 
     // Send peer their ID, room code, and list of other peers
     ws.send(JSON.stringify({
@@ -380,8 +327,6 @@ export class Room {
       type: 'peer-joined',
       data: { id: peerId, name: attachment.name, deviceType: attachment.deviceType, browserInfo: attachment.browserInfo },
     }, peerId);
-
-    console.log(`[Room] Broadcast peer-joined for ${peerId} to ${activePeers.size - 1} peers`);
   }
 
   /**
@@ -523,11 +468,6 @@ export class Room {
     const message = JSON.stringify(msg);
     const webSockets = this.state.getWebSockets();
 
-    console.log(`[Room] Broadcasting to ${webSockets.length} WebSockets, excluding ${excludePeerId || 'none'}`);
-
-    let sentCount = 0;
-    let errorCount = 0;
-
     for (const ws of webSockets) {
       try {
         const attachment = ws.deserializeAttachment() as PeerAttachment | null;
@@ -539,15 +479,10 @@ export class Room {
 
         // Try to send regardless of readyState - let the send fail if connection is bad
         ws.send(message);
-        sentCount++;
-        console.log(`[Room] Sent to ${attachment.id} (${attachment.name})`);
       } catch (e) {
-        errorCount++;
-        console.error(`[Room] Failed to send message:`, e);
+        // Silently ignore send failures - peer may have disconnected
       }
     }
-
-    console.log(`[Room] Broadcast complete: sent=${sentCount}, errors=${errorCount}`);
   }
 
   /**

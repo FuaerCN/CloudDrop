@@ -37,11 +37,6 @@ export default {
       return handleCheckRoomPassword(request, env);
     }
 
-    // Handle room debug API (for diagnostics)
-    if (url.pathname === '/api/room/debug') {
-      return handleRoomDebug(request, env);
-    }
-
     // Handle ICE servers request (for TURN credentials)
     if (url.pathname === '/api/ice-servers') {
       return handleIceServers(env);
@@ -80,7 +75,6 @@ async function handleWebSocket(request: Request, env: Env): Promise<Response> {
 
   // Unified: roomId is always derived from roomCode
   roomId = `room-${roomCode.toLowerCase()}`;
-  console.log(`[WS] Room: code=${roomCode}, id=${roomId}`);
 
   // Get or create the room Durable Object
   const roomObjectId = env.ROOM.idFromName(roomId);
@@ -296,39 +290,6 @@ async function handleCheckRoomPassword(request: Request, env: Env): Promise<Resp
   // Forward request to Room Durable Object
   const roomUrl = new URL(request.url);
   roomUrl.pathname = '/check-password';
-
-  return roomStub.fetch(new Request(roomUrl.toString(), {
-    method: 'GET',
-    headers: request.headers,
-  }));
-}
-
-/**
- * Handle room debug request
- * Returns diagnostic information about the room
- */
-async function handleRoomDebug(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const roomParam = url.searchParams.get('room');
-
-  if (!roomParam || !/^[a-zA-Z0-9]{4,16}$/.test(roomParam)) {
-    return new Response(JSON.stringify({
-      error: 'Invalid or missing room code. Use ?room=YOUR_ROOM_CODE'
-    }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-
-  const roomId = `room-${roomParam.toLowerCase()}`;
-  const roomObjectId = env.ROOM.idFromName(roomId);
-  const roomStub = env.ROOM.get(roomObjectId);
-
-  console.log(`[Debug] Fetching debug info for room: ${roomParam}, id: ${roomId}`);
-
-  // Forward request to Room Durable Object
-  const roomUrl = new URL(request.url);
-  roomUrl.pathname = '/debug';
 
   return roomStub.fetch(new Request(roomUrl.toString(), {
     method: 'GET',

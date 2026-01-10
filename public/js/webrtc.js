@@ -1659,9 +1659,9 @@ export class WebRTCManager {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      this.signalingSend({
+      this.signaling.send({
         type: 'offer',
-        target: peerId,
+        to: peerId,
         data: { sdp: pc.localDescription, publicKey }
       });
     } finally {
