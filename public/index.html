@@ -102,7 +102,8 @@
           </svg>
         </div>
         <h2 class="empty-title">等待设备加入</h2>
-        <p class="empty-description">在同一网络中打开此页面的其他设备将自动出现在这里</p>
+        <p class="empty-description">让其他设备通过<strong>相同房间号</strong>加入，即可互相发现并传输文件</p>
+        <p class="empty-description-hint">跨设备时请分享房间号，确保所有设备加入同一房间</p>
         <!-- Mobile empty state actions -->
         <div class="empty-state-actions">
           <button class="empty-action-btn primary" id="emptyShareRoom">
@@ -410,6 +411,44 @@
           <div class="receive-actions">
             <button class="btn btn-secondary" id="copyText">复制</button>
             <button class="btn btn-primary" id="closeReceivedText">关闭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- File Download Modal (for mobile) -->
+    <div class="modal" id="fileDownloadModal">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 class="modal-title">文件接收完成</h3>
+          <button class="modal-close" id="fileDownloadModalClose">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="download-file-info">
+            <div class="download-file-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                <path d="M14 2v6h6M12 18v-6M9 15l3 3 3-3"/>
+              </svg>
+            </div>
+            <div class="download-file-details">
+              <p class="download-file-name" id="downloadFileName">-</p>
+              <p class="download-file-size" id="downloadFileSize">-</p>
+            </div>
+          </div>
+          <div class="download-actions">
+            <a class="btn btn-primary download-btn" id="downloadFileBtn" href="#" download>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              </svg>
+              保存文件
+            </a>
+            <button class="btn btn-secondary" id="downloadFileClose">关闭</button>
           </div>
         </div>
       </div>

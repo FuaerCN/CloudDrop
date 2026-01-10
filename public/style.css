@@ -239,6 +239,22 @@ body::before {
   margin: 0 auto;
 }
 
+.empty-description strong {
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.empty-description-hint {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  max-width: 400px;
+  margin: var(--space-xs) auto 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: rgba(96, 165, 250, 0.1);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+}
+
 /* ============================================
    Peers Grid
    ============================================ */
@@ -1038,6 +1054,76 @@ body::before {
   box-shadow: 0 0 30px rgba(96, 165, 250, 0.4);
 }
 
+/* File Download Modal */
+.download-file-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.download-file-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.2), rgba(96, 165, 250, 0.2));
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.download-file-icon svg {
+  width: 28px;
+  height: 28px;
+  stroke: var(--status-success);
+}
+
+.download-file-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.download-file-name {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px 0;
+  word-break: break-all;
+}
+
+.download-file-size {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.download-actions {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.download-actions .btn {
+  flex: 1;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  text-decoration: none;
+}
+
+.download-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* Legacy receive-prompt for backward compatibility */
 .receive-prompt {
   margin-bottom: var(--space-lg);
@@ -1743,7 +1829,13 @@ body::before {
     line-height: 1.5;
     color: var(--text-muted);
   }
-  
+
+  .empty-description-hint {
+    font-size: var(--font-size-xs);
+    margin-top: var(--space-sm);
+    padding: var(--space-sm);
+  }
+
   /* Peer 网格 - 大卡片触摸友好 */
   .peers-grid {
     grid-template-columns: repeat(2, 1fr);

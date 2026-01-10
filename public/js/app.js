@@ -490,11 +490,9 @@ class CloudDrop {
 
     this.webrtc.onFileReceived = (peerId, name, blob) => {
       ui.hideModal('transferModal');
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = name; a.click();
-      URL.revokeObjectURL(url);
-      ui.showToast(`已接收: ${name}`, 'success');
+
+      // Show download modal instead of auto-download (better mobile support)
+      this.showFileDownloadModal(name, blob);
       this.currentTransfer = null;
     };
 
@@ -598,6 +596,18 @@ class CloudDrop {
           console.log('[Signaling] Room code:', this.roomCode);
         }
         msg.peers?.forEach(p => this.addPeer(p));
+
+        // Show room info hint if no peers (help users understand they need to share room code)
+        if (!msg.peers || msg.peers.length === 0) {
+          // Check if this is an auto-assigned room (no explicit room in URL)
+          const params = new URLSearchParams(location.search);
+          const hasExplicitRoom = params.has('room');
+
+          if (!hasExplicitRoom) {
+            // Auto-assigned room - show a hint about sharing
+            ui.showToast(`已加入房间 ${this.roomCode}，请分享房间号给其他设备`, 'info', 5000);
+          }
+        }
         break;
       case 'peer-joined':
         this.addPeer(msg.data);
@@ -890,7 +900,7 @@ class CloudDrop {
     document.getElementById('transferProgress').style.width = '0%';
     document.getElementById('transferPercent').textContent = '等待中';
     document.getElementById('transferSpeed').textContent = '';
-    
+
     // Update mode indicator to show connecting
     const indicator = document.getElementById('transferModeIndicator');
     if (indicator) {
@@ -898,8 +908,47 @@ class CloudDrop {
       const modeText = indicator.querySelector('.transfer-mode-text');
       if (modeText) modeText.textContent = '等待确认';
     }
-    
+
     ui.showModal('transferModal');
+  }
+
+  /**
+   * Show file download modal (for mobile-friendly download)
+   */
+  showFileDownloadModal(fileName, blob) {
+    // Store blob URL for cleanup
+    if (this._pendingDownloadUrl) {
+      URL.revokeObjectURL(this._pendingDownloadUrl);
+    }
+    this._pendingDownloadUrl = URL.createObjectURL(blob);
+    this._pendingDownloadName = fileName;
+
+    // Update modal content
+    document.getElementById('downloadFileName').textContent = fileName;
+    document.getElementById('downloadFileSize').textContent = ui.formatFileSize(blob.size);
+
+    // Set download link
+    const downloadBtn = document.getElementById('downloadFileBtn');
+    downloadBtn.href = this._pendingDownloadUrl;
+    downloadBtn.download = fileName;
+
+    // Show modal
+    ui.showModal('fileDownloadModal');
+
+    // Trigger notification
+    ui.triggerNotification('file');
+  }
+
+  /**
+   * Clean up download modal resources
+   */
+  cleanupDownloadModal() {
+    if (this._pendingDownloadUrl) {
+      URL.revokeObjectURL(this._pendingDownloadUrl);
+      this._pendingDownloadUrl = null;
+    }
+    this._pendingDownloadName = null;
+    ui.hideModal('fileDownloadModal');
   }
 
   joinRoom(code) {
@@ -1382,6 +1431,16 @@ class CloudDrop {
       const text = document.getElementById('receivedText').textContent;
       navigator.clipboard.writeText(text);
       ui.showToast('已复制到剪贴板', 'success');
+    });
+
+    // File download modal
+    document.getElementById('fileDownloadModalClose')?.addEventListener('click', () => this.cleanupDownloadModal());
+    document.getElementById('downloadFileClose')?.addEventListener('click', () => this.cleanupDownloadModal());
+    document.getElementById('downloadFileBtn')?.addEventListener('click', () => {
+      // Show success toast after user clicks download
+      ui.showToast(`已保存: ${this._pendingDownloadName}`, 'success');
+      // Delay cleanup to allow download to start
+      setTimeout(() => this.cleanupDownloadModal(), 500);
     });
 
     // Chat panel events
