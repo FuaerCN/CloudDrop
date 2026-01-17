@@ -8,7 +8,7 @@ export class I18n {
     this.locale = 'zh'; // Default locale
     this.fallbackLocale = 'zh';
     this.translations = {};
-    this.supportedLocales = ['en', 'zh', 'zh-TW', 'ja', 'ko', 'es', 'fr', 'de', 'ar'];
+    this.supportedLocales = ['en', 'zh', 'zh-HK', 'ja', 'ko', 'es', 'fr', 'de', 'ar'];
   }
 
   /**
@@ -67,11 +67,11 @@ export class I18n {
       'ar': 'ar'
     };
 
-    // Special handling for zh-TW, zh-HK (Traditional Chinese)
+    // Special handling for zh-HK, zh-HK (Traditional Chinese)
     if (browserLang.toLowerCase().startsWith('zh-tw') ||
         browserLang.toLowerCase().startsWith('zh-hk') ||
         browserLang.toLowerCase().startsWith('zh-hant')) {
-      return 'zh-TW';
+      return 'zh-HK';
     }
 
     if (langMap[langCode] && this.supportedLocales.includes(langMap[langCode])) {
@@ -170,7 +170,7 @@ export class I18n {
       'es': (n) => n === 1 ? 'one' : 'other',
       'fr': (n) => n === 0 || n === 1 ? 'one' : 'other',
       'zh': () => 'other',
-      'zh-TW': () => 'other',
+      'zh-HK': () => 'other',
       'ja': () => 'other',
       'ko': () => 'other',
       'ar': (n) => {
@@ -342,7 +342,7 @@ export class I18n {
     const ogLocales = {
       'en': 'en_US',
       'zh': 'zh_CN',
-      'zh-TW': 'zh_TW',
+      'zh-HK': 'zh_TW',
       'ja': 'ja_JP',
       'ko': 'ko_KR',
       'es': 'es_ES',
@@ -404,7 +404,7 @@ export class I18n {
     const tags = {
       'en': 'en-US',
       'zh': 'zh-CN',
-      'zh-TW': 'zh-TW',
+      'zh-HK': 'zh-HK',
       'ja': 'ja-JP',
       'ko': 'ko-KR',
       'es': 'es-ES',
@@ -470,7 +470,7 @@ export class I18n {
     const names = {
       'en': 'English',
       'zh': '简体中文',
-      'zh-TW': '繁體中文',
+      'zh-HK': '繁體中文',
       'ja': '日本語',
       'ko': '한국어',
       'es': 'Español',
