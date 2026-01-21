@@ -675,7 +675,7 @@ class CloudDrop {
   connectWebSocket() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // If roomCode is set, use it; otherwise let server assign based on IP
-    let wsUrl = this.roomCode
+    const wsUrl = this.roomCode
       ? `${protocol}//${location.host}/ws?room=${this.roomCode}`
       : `${protocol}//${location.host}/ws`;
 
@@ -683,14 +683,6 @@ class CloudDrop {
     // but we can pass auth info via subprotocol or upgrade request modifications
     // Cloudflare Workers can access request headers during upgrade
     // We'll use a custom header through fetch API upgrade mechanism
-
-    // Create connection with password hash if available
-    if (this.isSecureRoom && this.roomPasswordHash) {
-      // Note: Browser WebSocket doesn't support custom headers directly
-      // But Cloudflare Workers can intercept the upgrade request
-      // We pass the password hash through a query parameter (over WSS it's encrypted)
-      wsUrl += `${this.roomCode ? '&' : '?'}passwordHash=${encodeURIComponent(this.roomPasswordHash)}`;
-    }
 
     this.ws = new WebSocket(wsUrl);
 
@@ -702,17 +694,14 @@ class CloudDrop {
       ui.clearPeersGrid(document.getElementById('peersGrid'));
       this.webrtc?.closeAll(); // Also close stale WebRTC connections
 
-      this.ws.send(JSON.stringify({
-        type: 'join',
-        data: {
-          name: this.deviceName,
-          deviceType: this.deviceType,
-          browserInfo: this.browserInfo
-        }
-      }));
+      // If NOT secure room, send join immediately
+      // If secure room, we wait for 'challenge' message
+      if (!this.isSecureRoom || !this.roomPasswordHash) {
+        this.sendJoinMessage();
+      }
     };
 
-    this.ws.onmessage = (e) => {
+    this.ws.onmessage = async (e) => {
       const message = JSON.parse(e.data);
 
       // Handle password error messages
@@ -723,6 +712,19 @@ class CloudDrop {
           // WebSocket will be closed by server, onclose handler will show join modal
           return;
         }
+      }
+
+      // Handle challenge for secure rooms
+      if (message.type === 'challenge') {
+        if (this.roomPasswordHash) {
+          const nonce = message.data.nonce;
+          const response = await cryptoManager.calculateChallengeResponse(this.roomPasswordHash, nonce);
+          this.ws.send(JSON.stringify({
+            type: 'auth',
+            data: { response }
+          }));
+        }
+        return;
       }
 
       this.handleSignaling(message);
@@ -904,9 +906,24 @@ class CloudDrop {
     };
   }
 
+  sendJoinMessage() {
+    this.ws.send(JSON.stringify({
+      type: 'join',
+      data: {
+        name: this.deviceName,
+        deviceType: this.deviceType,
+        browserInfo: this.browserInfo
+      }
+    }));
+  }
+
   handleSignaling(msg) {
     console.log('[Signaling] Received:', msg.type, msg);
     switch (msg.type) {
+      case 'auth-success':
+        // Authentication successful, now join the room
+        this.sendJoinMessage();
+        break;
       case 'joined':
         this.peerId = msg.peerId;
         console.log('[Signaling] My peer ID:', this.peerId);

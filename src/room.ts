@@ -25,7 +25,7 @@ interface Peer {
 }
 
 interface SignalingMessage {
-  type: 'join' | 'leave' | 'offer' | 'answer' | 'ice-candidate' | 'peers' | 'text' | 'peer-joined' | 'peer-left' | 'relay-data' | 'name-changed' | 'key-exchange' | 'file-request' | 'file-response' | 'file-cancel';
+  type: 'join' | 'leave' | 'offer' | 'answer' | 'ice-candidate' | 'peers' | 'text' | 'peer-joined' | 'peer-left' | 'relay-data' | 'name-changed' | 'key-exchange' | 'file-request' | 'file-response' | 'file-cancel' | 'auth' | 'auth-success' | 'challenge';
   from?: string;
   to?: string;
   data?: unknown;
@@ -35,11 +35,14 @@ interface SignalingMessage {
  * Peer attachment data stored with WebSocket (survives hibernation)
  */
 interface PeerAttachment {
-  id: string;
-  name: string;
-  deviceType: 'desktop' | 'mobile' | 'tablet';
+  id?: string;
+  name?: string;
+  deviceType?: 'desktop' | 'mobile' | 'tablet';
   browserInfo?: string;
   publicKey?: string;
+  isAuthenticated?: boolean;
+  authChallenge?: string;
+  authAttempts?: number; // Track failed attempts per connection
 }
 
 /**
@@ -51,15 +54,69 @@ interface PeerAttachment {
 export class Room {
   private state: DurableObjectState;
   private passwordHash: string | null; // Password hash for secure rooms (null = no password)
+  private messageRateLimits: Map<WebSocket, { count: number; lastReset: number }> = new Map();
+  // Removed global passwordAttempts to prevent DoS
+
+  // Constants
+  private static readonly MAX_NAME_LENGTH = 50;
+  private static readonly RATE_LIMIT_WINDOW = 1000; // 1 second
+  private static readonly MAX_MSGS_PER_WINDOW = 10; // 10 messages per second
+  private static readonly MAX_PASSWORD_ATTEMPTS = 5; // 5 attempts per connection
+  private static readonly SECURE_ROOM_TTL = 600000; // 10 minutes
 
   constructor(state: DurableObjectState, _env: Env) {
     this.state = state;
     this.passwordHash = null;
+    this.passwordAttempts = { count: 0, lastReset: Date.now() }; // Keep for TS compatibility but unused logic
 
     // Load password hash from storage on initialization
     this.state.blockConcurrencyWhile(async () => {
       this.passwordHash = await this.state.storage.get<string>('passwordHash') || null;
+      // If there's a password, set an alarm to check for inactivity
+      if (this.passwordHash) {
+         await this.scheduleInactivityCheck();
+      }
     });
+  }
+
+  /**
+   * Schedule inactivity check alarm
+   */
+  private async scheduleInactivityCheck() {
+     const currentAlarm = await this.state.storage.getAlarm();
+     if (currentAlarm === null) {
+        await this.state.storage.setAlarm(Date.now() + Room.SECURE_ROOM_TTL);
+     }
+  }
+
+  /**
+   * Handle Durable Object Alarm
+   * Triggered when room is inactive for too long
+   */
+  async alarm(): Promise<void> {
+    // Check if room has any AUTHENTICATED peers
+    const activePeers = this.getActivePeers();
+    let hasAuthenticatedUsers = false;
+    
+    for (const { attachment } of activePeers.values()) {
+      if (attachment.isAuthenticated) {
+        hasAuthenticatedUsers = true;
+        break;
+      }
+    }
+
+    if (!hasAuthenticatedUsers && this.passwordHash) {
+       // Room is empty (or only has unauthenticated ghosts) -> destroy it
+       this.passwordHash = null;
+       await this.state.storage.delete('passwordHash');
+       
+       // Close any remaining unauthenticated connections
+       for (const { ws } of activePeers.values()) {
+         ws.close(4000, 'Room destroyed due to inactivity');
+       }
+       
+       console.log('[Room] Secure room destroyed due to inactivity');
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -130,6 +187,9 @@ export class Room {
       this.passwordHash = body.passwordHash;
       await this.state.storage.put('passwordHash', body.passwordHash);
 
+      // Set TTL alarm
+      await this.state.storage.setAlarm(Date.now() + Room.SECURE_ROOM_TTL);
+
       return new Response(JSON.stringify({
         success: true
       }), {
@@ -156,9 +216,6 @@ export class Room {
     // Get room code from header (passed by index.ts)
     const roomCode = request.headers.get('X-Room-Code') || '';
 
-    // Get password hash (will be verified after connection is established)
-    const providedPasswordHash = request.headers.get('X-Room-Password-Hash');
-
     // Create WebSocket pair
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
@@ -167,29 +224,27 @@ export class Room {
     // Use tag to store room code (survives hibernation)
     this.state.acceptWebSocket(server, [roomCode]);
 
-    // If room is password-protected, verify immediately after accept
-    if (this.passwordHash !== null) {
-      if (!providedPasswordHash) {
-        // Send error message then close
-        server.send(JSON.stringify({
-          type: 'error',
-          error: 'PASSWORD_REQUIRED',
-          message: '此房间需要密码'
-        }));
-        server.close(4001, 'PASSWORD_REQUIRED');
-        return new Response(null, { status: 101, webSocket: client });
-      }
+    // Generate challenge nonce
+    const nonce = crypto.randomUUID();
 
-      if (providedPasswordHash !== this.passwordHash) {
-        // Send error message then close
-        server.send(JSON.stringify({
-          type: 'error',
-          error: 'PASSWORD_INCORRECT',
-          message: '密码错误'
-        }));
-        server.close(4002, 'PASSWORD_INCORRECT');
-        return new Response(null, { status: 101, webSocket: client });
-      }
+    // Initialize attachment with isAuthenticated: false if password is set
+    // If no password, they are implicitly authenticated
+    server.serializeAttachment({
+      isAuthenticated: this.passwordHash === null,
+      authChallenge: nonce,
+      authAttempts: 0
+    });
+
+    // Initialize rate limiter for this connection
+    this.messageRateLimits.set(server, { count: 0, lastReset: Date.now() });
+
+    // If password is required, send challenge immediately
+    if (this.passwordHash !== null) {
+      server.send(JSON.stringify({
+        type: 'challenge',
+        data: { nonce }
+      }));
+      // Do NOT delete alarm here. Wait until auth success.
     }
 
     return new Response(null, {
@@ -233,8 +288,47 @@ export class Room {
    */
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string): Promise<void> {
     try {
+      // 1. Rate Limiting Check
+      if (this.isRateLimited(ws)) {
+        // Optional: Send warning or just ignore
+        return; 
+      }
+
       const data = typeof message === 'string' ? message : new TextDecoder().decode(message);
+      
+      // 2. Message Size Validation (Basic DoS protection)
+      if (data.length > 262144) { 
+         ws.send(JSON.stringify({
+           type: 'error',
+           error: 'MESSAGE_TOO_LARGE',
+           message: 'Message exceeds size limit (256KB)'
+         }));
+         return;
+      }
+
       const msg: SignalingMessage = JSON.parse(data);
+
+      // Check authentication
+      const attachment = ws.deserializeAttachment() as PeerAttachment | null;
+      // If room has password and user is not authenticated yet
+      if (this.passwordHash !== null) {
+        const isAuthenticated = attachment?.isAuthenticated === true;
+        
+        if (!isAuthenticated) {
+          if (msg.type === 'auth') {
+             await this.handleAuth(ws, msg, attachment);
+             return;
+          }
+          
+          // Reject any other message type if not authenticated
+          ws.send(JSON.stringify({
+            type: 'error',
+            error: 'PASSWORD_REQUIRED',
+            message: '此房间需要密码'
+          }));
+          return;
+        }
+      }
 
       switch (msg.type) {
         case 'join':
@@ -269,9 +363,117 @@ export class Room {
   }
 
   /**
+   * Check if WebSocket is rate limited
+   */
+  private isRateLimited(ws: WebSocket): boolean {
+    let limit = this.messageRateLimits.get(ws);
+    const now = Date.now();
+
+    if (!limit) {
+      limit = { count: 0, lastReset: now };
+      this.messageRateLimits.set(ws, limit);
+    }
+
+    if (now - limit.lastReset > Room.RATE_LIMIT_WINDOW) {
+      limit.count = 0;
+      limit.lastReset = now;
+    }
+
+    limit.count++;
+    
+    // If exceeded, we can block
+    if (limit.count > Room.MAX_MSGS_PER_WINDOW) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Check password lockout status (Legacy/Unused)
+   */
+  private checkPasswordLockout(): boolean {
+    return false;
+  }
+
+  /**
+   * Handle authentication request with brute-force protection
+   */
+  private async handleAuth(ws: WebSocket, msg: SignalingMessage, currentAttachment: PeerAttachment | null): Promise<void> {
+    // Check per-connection attempts
+    const attempts = currentAttachment?.authAttempts || 0;
+    if (attempts >= Room.MAX_PASSWORD_ATTEMPTS) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: 'RATE_LIMIT_EXCEEDED',
+        message: '尝试次数过多，请重新连接'
+      }));
+      ws.close(4002, 'RATE_LIMIT_EXCEEDED');
+      return;
+    }
+
+    const authData = msg.data as { response: string };
+    const expectedNonce = currentAttachment?.authChallenge;
+
+    if (!expectedNonce || !this.passwordHash) {
+       ws.close(4002, 'AUTH_ERROR');
+       return;
+    }
+
+    // Verify response = SHA256(passwordHash + nonce)
+    const encoder = new TextEncoder();
+    const data = encoder.encode(this.passwordHash + expectedNonce);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const expectedResponse = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    if (authData && authData.response === expectedResponse) {
+      // Authentication successful
+      
+      // Clear challenge and set authenticated
+      ws.serializeAttachment({
+        ...currentAttachment,
+        isAuthenticated: true,
+        authChallenge: undefined,
+        authAttempts: 0
+      });
+      
+      // Now that we have a verified user, we can clear the inactivity alarm
+      await this.state.storage.deleteAlarm();
+
+      ws.send(JSON.stringify({
+        type: 'auth-success'
+      }));
+    } else {
+      // Authentication failed - increment attempts
+      const newAttempts = attempts + 1;
+      const newNonce = crypto.randomUUID();
+
+      ws.serializeAttachment({
+        ...currentAttachment,
+        authChallenge: newNonce,
+        authAttempts: newAttempts
+      });
+
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: 'PASSWORD_INCORRECT',
+        message: '密码错误',
+        data: { nonce: newNonce } // Send new nonce for retry
+      }));
+      
+      // If max attempts reached, close
+      if (newAttempts >= Room.MAX_PASSWORD_ATTEMPTS) {
+        ws.close(4002, 'RATE_LIMIT_EXCEEDED');
+      }
+    }
+  }
+
+  /**
    * WebSocket close handler (Hibernation API)
    */
   async webSocketClose(ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
+    this.messageRateLimits.delete(ws);
     await this.handleLeave(ws);
   }
 
@@ -279,7 +481,16 @@ export class Room {
    * WebSocket error handler (Hibernation API)
    */
   async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
+    this.messageRateLimits.delete(ws);
     await this.handleLeave(ws);
+  }
+
+  /**
+   * Sanitize string input (truncate to max length)
+   */
+  private sanitizeString(str: string, maxLength: number): string {
+    if (!str) return '';
+    return str.substring(0, maxLength);
   }
 
   /**
@@ -289,6 +500,9 @@ export class Room {
     const joinData = msg.data as { name: string; deviceType: 'desktop' | 'mobile' | 'tablet'; browserInfo?: string };
     const peerId = crypto.randomUUID();
 
+    // Sanitize name
+    const sanitizedName = this.sanitizeString(joinData.name || this.generateName(), Room.MAX_NAME_LENGTH);
+
     // Get room code from WebSocket tag
     const tags = this.state.getTags(ws);
     const roomCode = tags.length > 0 ? tags[0] : '';
@@ -296,9 +510,10 @@ export class Room {
     // Create peer attachment data
     const attachment: PeerAttachment = {
       id: peerId,
-      name: joinData.name || this.generateName(),
+      name: sanitizedName,
       deviceType: joinData.deviceType || 'desktop',
-      browserInfo: joinData.browserInfo,
+      browserInfo: this.sanitizeString(joinData.browserInfo || '', 100), // Limit browser info length
+      isAuthenticated: true, // If they reached here, they are authenticated (or no password required)
     };
 
     // Store peer info in WebSocket attachment (survives hibernation)
@@ -342,6 +557,40 @@ export class Room {
         data: { id: peerId },
       });
     }
+
+    // Check if room is empty now
+    // We need to wait a tick because getWebSockets() might still include the closing one?
+    // Actually handleLeave is called from webSocketClose/Error, so it should be fine or we check explicitly
+    const activePeers = this.getActivePeers();
+    // Note: The current WS is already in 'CLOSING' or 'CLOSED' state or about to be,
+    // but getActivePeers filters for OPEN. 
+    // However, to be safe, we check if count is 0.
+    
+    if (activePeers.size === 0 && this.passwordHash) {
+       // Room became empty, schedule destruction
+       await this.state.storage.setAlarm(Date.now() + Room.SECURE_ROOM_TTL);
+    } else {
+       // Room is not empty, check if we have any authenticated users
+       // If only unauthenticated users remain, we might want to schedule alarm anyway?
+       // For simplicity, we rely on handleAuth clearing alarm.
+       // But if everyone leaves except one unauthenticated user, handleLeave logic above keeps alarm cleared?
+       // Wait, handleLeave checks activePeers.size. If activePeers > 0, we don't set alarm.
+       // This is fine. If users are stuck in unauthenticated state, they can't do anything.
+       // But we should probably check if *only* unauthenticated users remain.
+       
+       let hasAuthenticated = false;
+       for (const { attachment } of activePeers.values()) {
+         if (attachment.isAuthenticated) {
+           hasAuthenticated = true;
+           break;
+         }
+       }
+       
+       if (!hasAuthenticated && this.passwordHash) {
+          // No authenticated users left, start countdown
+          await this.state.storage.setAlarm(Date.now() + Room.SECURE_ROOM_TTL);
+       }
+    }
   }
 
   /**
@@ -381,10 +630,20 @@ export class Room {
     const fromPeerId = this.getPeerIdFromWs(ws);
     if (!fromPeerId) return;
 
+    // Validate and sanitize text content
+    let textData = msg.data;
+    if (typeof textData === 'string') {
+        // No explicit length limit for text messages to allow large pastes/code
+        // Basic DoS protection is handled by message size limit (50KB) in webSocketMessage
+        textData = textData; 
+    } else if (typeof textData === 'object' && textData !== null) {
+        // If it's a JSON object (like image message), we relying on message size limit
+    }
+
     this.sendToPeer(msg.to, {
       type: 'text',
       from: fromPeerId,
-      data: msg.data,
+      data: textData,
     });
   }
 
@@ -504,11 +763,12 @@ export class Room {
     if (!senderId) return;
 
     const nameData = msg.data as { name: string };
+    const sanitizedName = this.sanitizeString(nameData.name, Room.MAX_NAME_LENGTH);
     
     // Update peer attachment with new name
     const attachment = ws.deserializeAttachment() as PeerAttachment | null;
     if (attachment) {
-      attachment.name = nameData.name;
+      attachment.name = sanitizedName;
       ws.serializeAttachment(attachment);
     }
 
@@ -516,7 +776,7 @@ export class Room {
     this.broadcast({
       type: 'name-changed',
       from: senderId,
-      data: { name: nameData.name }
+      data: { name: sanitizedName }
     }, senderId);
   }
 }

@@ -87,12 +87,6 @@ async function handleWebSocket(request: Request, env: Env): Promise<Response> {
   const headers = new Headers(request.headers);
   headers.set('X-Room-Code', roomCode);
 
-  // Pass password hash if provided (from URL query parameter)
-  const passwordHash = url.searchParams.get('passwordHash');
-  if (passwordHash) {
-    headers.set('X-Room-Password-Hash', passwordHash);
-  }
-
   return roomStub.fetch(new Request(wsUrl.toString(), {
     headers,
     method: request.method,
